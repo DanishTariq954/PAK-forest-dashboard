@@ -1,4 +1,4 @@
-"""
+﻿"""
 Near-real-time (weekly) deforestation alerting for Pakistan using Sentinel-2.
 
 Why not GLAD/RADD alerts: those near-real-time alert products (used by
@@ -16,7 +16,7 @@ custom alert from Sentinel-2 NDVI instead:
      for the map plus a running weekly summary time series.
 
 This is a heuristic screening tool, not an official/validated alert product
-— flagged areas should be treated as "worth a closer look", not confirmed
+- flagged areas should be treated as "worth a closer look", not confirmed
 clearances. Cloud cover, seasonal leaf-off, and agriculture harvest cycles
 can all trigger false positives.
 
@@ -46,12 +46,21 @@ def mask_s2_clouds(image):
     return image.updateMask(mask).divide(10000).copyProperties(image, ["system:time_start"])
 
 
-def ndvi_composite(study_area, start, end):
+def ndvi_composite(study_area, start, end, max_images=80):
+    """Build a cloud-masked NDVI composite, capped to the cleanest
+    max_images scenes. Capping matters: without it, a country-sized area
+    over an 8-week window can pull in thousands of Sentinel-2 scenes,
+    which is far too much work to finish inside Earth Engine's ~5-minute
+    synchronous request limit. Selecting only the bands we need (B4, B8,
+    QA60) before compositing also meaningfully cuts the per-image cost."""
     coll = (
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterBounds(study_area)
         .filterDate(start, end)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 60))
+        .select(["B4", "B8", "QA60"])
+        .sort("CLOUDY_PIXEL_PERCENTAGE")
+        .limit(max_images)
         .map(mask_s2_clouds)
     )
     composite = coll.median()
@@ -66,7 +75,7 @@ def main():
     hansen = ee.Image("UMD/hansen/global_forest_change_2025_v1_13")
     tree_cover_2000 = hansen.select("treecover2000").gt(0).selfMask().clip(study_area)
     loss = hansen.select("loss").clip(study_area)
-    standing_forest_mask = tree_cover_2000.updateMask(loss.Not())  # forest not already logged by Hansen's record
+    standing_forest_mask = tree_cover_2000.updateMask(loss.Not())
 
     today = datetime.date.today()
     current_start = today - datetime.timedelta(days=7)
@@ -74,14 +83,14 @@ def main():
     baseline_start = current_start - datetime.timedelta(weeks=BASELINE_WEEKS)
     baseline_end = current_start
 
-    print(f"Baseline window: {baseline_start} to {baseline_end}")
-    print(f"Current window:  {current_start} to {current_end}")
+    print(f"Baseline window: {baseline_start} to {baseline_end}", flush=True)
+    print(f"Current window:  {current_start} to {current_end}", flush=True)
 
     ndvi_baseline, n_baseline = ndvi_composite(study_area, str(baseline_start), str(baseline_end))
     ndvi_current, n_current = ndvi_composite(study_area, str(current_start), str(current_end))
 
-    print("Baseline images used:", n_baseline.getInfo())
-    print("Current images used:", n_current.getInfo())
+    print("Baseline images used:", n_baseline.getInfo(), flush=True)
+    print("Current images used:", n_current.getInfo(), flush=True)
 
     ndvi_drop = ndvi_baseline.subtract(ndvi_current)
 
@@ -96,27 +105,28 @@ def main():
 
     total_alert_m2 = ee.Number(
         alert_area_img.reduceRegion(
-            reducer=ee.Reducer.sum(), geometry=study_area, scale=20, maxPixels=1e13
+            reducer=ee.Reducer.sum(), geometry=study_area, scale=100, maxPixels=1e13,
+            bestEffort=True, tileScale=4
         ).get("treecover2000", 0)
     )
     total_alert_acres = total_alert_m2.multiply(M2_TO_ACRES).getInfo()
     total_alert_acres = round(total_alert_acres, 2) if total_alert_acres else 0.0
 
-    print(f"Flagged alert area this week: {total_alert_acres} acres")
+    print(f"Flagged alert area this week: {total_alert_acres} acres", flush=True)
 
-    # Vectorize for the map (capped scale/complexity to stay within EE limits)
     vectors = alert_mask.selfMask().reduceToVectors(
         geometry=study_area,
-        scale=30,
+        scale=200,
         geometryType="polygon",
         eightConnected=True,
         maxPixels=1e13,
         bestEffort=True,
+        tileScale=4,
     )
 
     geojson = {"type": "FeatureCollection", "features": []}
     try:
-        fc_info = vectors.limit(2000).getInfo()  # safety cap on feature count
+        fc_info = vectors.limit(2000).getInfo()
         for feat in fc_info.get("features", []):
             geojson["features"].append({
                 "type": "Feature",
@@ -133,7 +143,6 @@ def main():
         json.dump(geojson, f)
     print(f"Wrote {len(geojson['features'])} alert polygons to weekly_alerts.geojson")
 
-    # Append to the running weekly time series
     summary_path = os.path.join(data_dir, "weekly_summary.json")
     if os.path.exists(summary_path):
         with open(summary_path) as f:

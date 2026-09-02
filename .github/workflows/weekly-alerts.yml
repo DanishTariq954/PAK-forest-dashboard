@@ -1,8 +1,8 @@
-name: Weekly Deforestation Alert Scan
+﻿name: Weekly Deforestation Alert Scan
 
 on:
   schedule:
-    - cron: "0 6 * * 1"   # Every Monday, 06:00 UTC (~11:00 AM PKT)
+    - cron: "0 6 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -23,7 +23,8 @@ jobs:
       - name: Run weekly Sentinel-2 alert scan
         env:
           EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
-        run: python scripts/update_weekly_alerts.py
+          PYTHONUNBUFFERED: "1"
+        run: python -u scripts/update_weekly_alerts.py
 
       - name: Commit updated alert data
         run: |
