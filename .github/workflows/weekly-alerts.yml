@@ -1,0 +1,34 @@
+name: Weekly Deforestation Alert Scan
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Every Monday, 06:00 UTC (~11:00 AM PKT)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  weekly-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install earthengine-api
+
+      - name: Run weekly Sentinel-2 alert scan
+        env:
+          EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
+        run: python scripts/update_weekly_alerts.py
+
+      - name: Commit updated alert data
+        run: |
+          git config user.name "forest-watch-bot"
+          git config user.email "actions@github.com"
+          git add docs/data/weekly_alerts.geojson docs/data/weekly_summary.json
+          git diff --quiet --cached || git commit -m "Weekly alert scan: $(date -u +'%Y-%m-%d')"
+          git push
