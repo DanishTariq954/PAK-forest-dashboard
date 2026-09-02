@@ -4,21 +4,21 @@ Near-real-time (weekly) deforestation alerting for Pakistan using Sentinel-2.
 Why not GLAD/RADD alerts: those near-real-time alert products (used by
 Global Forest Watch) only cover humid tropical forest belts (Amazon, Congo
 Basin, SE Asia) and do not include Pakistan. So this builds a lightweight
-custom alert from Sentinel-2 NDVI instead:
+custom alert from Sentinel-2 NDVI instead.
 
-  1. Restrict to the "still standing" forest mask (Hansen treecover2000,
-     minus everything lost through the end of the historical record).
-  2. Build a cloud-masked NDVI baseline composite from the trailing 8 weeks.
-  3. Build a cloud-masked NDVI composite for the most recent 7-day window.
-  4. Flag pixels that were healthy forest in the baseline (NDVI above a
-     vegetation threshold) and dropped sharply in the current window.
-  5. Vectorize the flagged pixels, compute acreage, and export a GeoJSON
-     for the map plus a running weekly summary time series.
+Why an EXPORT TASK instead of a direct request: a country-wide area
+computation over Sentinel-2 imagery is too heavy to finish inside Earth
+Engine's ~5-minute synchronous request limit, no matter how the scale or
+tileScale parameters are tuned -- that ceiling is a hard platform limit.
+Submitting the work as a background export task removes that ceiling
+entirely: the task runs for as long as it needs, and this script just
+polls for completion, then reads the (already computed, so now cheap)
+result.
 
-This is a heuristic screening tool, not an official/validated alert product
-- flagged areas should be treated as "worth a closer look", not confirmed
-clearances. Cloud cover, seasonal leaf-off, and agriculture harvest cycles
-can all trigger false positives.
+This is a heuristic screening tool, not an official/validated alert
+product -- flagged areas should be treated as "worth a closer look", not
+confirmed clearances. Cloud cover, seasonal leaf-off, and agriculture
+harvest cycles can all trigger false positives.
 
 Run: python scripts/update_weekly_alerts.py
 """
@@ -26,19 +26,20 @@ Run: python scripts/update_weekly_alerts.py
 import datetime
 import json
 import os
+import time
 import ee
 from common import init_earth_engine, get_study_area
 
 M2_TO_ACRES = 0.000247105
 BASELINE_WEEKS = 8
-NDVI_HEALTHY_THRESHOLD = 0.5   # baseline must look like real vegetation
-NDVI_DROP_THRESHOLD = 0.20     # absolute NDVI drop to count as "lost"
-MIN_ALERT_PATCH_M2 = 900       # ignore single-pixel noise (~1 Sentinel-2 pixel)
+NDVI_HEALTHY_THRESHOLD = 0.5
+NDVI_DROP_THRESHOLD = 0.20
+MAX_IMAGES_PER_COMPOSITE = 80
+EXPORT_POLL_SECONDS = 15
+EXPORT_TIMEOUT_SECONDS = 25 * 60
 
 
 def mask_s2_clouds(image):
-    """Cloud-mask Sentinel-2 SR using the built-in QA60 band (simple, fast,
-    good enough for a weekly screening product)."""
     qa = image.select("QA60")
     cloud_bit_mask = 1 << 10
     cirrus_bit_mask = 1 << 11
@@ -46,13 +47,7 @@ def mask_s2_clouds(image):
     return image.updateMask(mask).divide(10000).copyProperties(image, ["system:time_start"])
 
 
-def ndvi_composite(study_area, start, end, max_images=80):
-    """Build a cloud-masked NDVI composite, capped to the cleanest
-    max_images scenes. Capping matters: without it, a country-sized area
-    over an 8-week window can pull in thousands of Sentinel-2 scenes,
-    which is far too much work to finish inside Earth Engine's ~5-minute
-    synchronous request limit. Selecting only the bands we need (B4, B8,
-    QA60) before compositing also meaningfully cuts the per-image cost."""
+def ndvi_composite(study_area, start, end, max_images=MAX_IMAGES_PER_COMPOSITE):
     coll = (
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterBounds(study_area)
@@ -66,6 +61,36 @@ def ndvi_composite(study_area, start, end, max_images=80):
     composite = coll.median()
     ndvi = composite.normalizedDifference(["B8", "B4"]).rename("NDVI")
     return ndvi, coll.size()
+
+
+def run_export_and_wait(collection, description, asset_id):
+    try:
+        ee.data.deleteAsset(asset_id)
+        print(f"  Deleted stale asset from a previous run: {asset_id}", flush=True)
+    except Exception:
+        pass
+
+    task = ee.batch.Export.table.toAsset(
+        collection=collection, description=description, assetId=asset_id
+    )
+    task.start()
+    print(f"Started background export task '{description}' -> {asset_id}", flush=True)
+
+    waited = 0
+    while waited < EXPORT_TIMEOUT_SECONDS:
+        status = task.status()
+        state = status.get("state")
+        print(f"  [{waited}s] export task state: {state}", flush=True)
+        if state == "COMPLETED":
+            return True
+        if state in ("FAILED", "CANCELLED"):
+            print("  Task error details:", status.get("error_message"), flush=True)
+            return False
+        time.sleep(EXPORT_POLL_SECONDS)
+        waited += EXPORT_POLL_SECONDS
+
+    print("  Export did not finish within the timeout window.", flush=True)
+    return False
 
 
 def main():
@@ -100,20 +125,6 @@ def main():
         .And(ndvi_drop.gte(NDVI_DROP_THRESHOLD))
     )
 
-    pixel_area = ee.Image.pixelArea()
-    alert_area_img = alert_mask.selfMask().multiply(pixel_area)
-
-    total_alert_m2 = ee.Number(
-        alert_area_img.reduceRegion(
-            reducer=ee.Reducer.sum(), geometry=study_area, scale=100, maxPixels=1e13,
-            bestEffort=True, tileScale=4
-        ).get("treecover2000", 0)
-    )
-    total_alert_acres = total_alert_m2.multiply(M2_TO_ACRES).getInfo()
-    total_alert_acres = round(total_alert_acres, 2) if total_alert_acres else 0.0
-
-    print(f"Flagged alert area this week: {total_alert_acres} acres", flush=True)
-
     vectors = alert_mask.selfMask().reduceToVectors(
         geometry=study_area,
         scale=200,
@@ -122,26 +133,45 @@ def main():
         maxPixels=1e13,
         bestEffort=True,
         tileScale=4,
-    )
+    ).map(lambda f: f.set("area_acres", f.geometry().area(maxError=30).multiply(M2_TO_ACRES)))
+
+    asset_root = ee.data.getAssetRoots()[0]["id"]
+    asset_id = f"{asset_root}/pak_forest_watch_weekly_tmp"
+
+    success = run_export_and_wait(vectors, "pak_forest_watch_weekly_export", asset_id)
 
     geojson = {"type": "FeatureCollection", "features": []}
-    try:
-        fc_info = vectors.limit(2000).getInfo()
+    total_alert_acres = 0.0
+
+    if success:
+        print("Export completed -- reading results (cheap now, already computed)...", flush=True)
+        fc_info = ee.FeatureCollection(asset_id).getInfo()
         for feat in fc_info.get("features", []):
+            props = feat.get("properties", {})
             geojson["features"].append({
                 "type": "Feature",
                 "geometry": feat["geometry"],
                 "properties": {"week_of": str(current_start)},
             })
-    except Exception as e:
-        print("Vectorization returned no/limited features:", e)
+            total_alert_acres += props.get("area_acres", 0) or 0
+        total_alert_acres = round(total_alert_acres, 2)
+
+        try:
+            ee.data.deleteAsset(asset_id)
+            print("Cleaned up temporary asset.", flush=True)
+        except Exception as e:
+            print("Could not delete temp asset (non-fatal):", e, flush=True)
+    else:
+        print("Export did not complete successfully -- writing empty results for this week.", flush=True)
+
+    print(f"Flagged alert area this week: {total_alert_acres} acres", flush=True)
 
     data_dir = os.path.join(os.path.dirname(__file__), "..", "docs", "data")
     os.makedirs(data_dir, exist_ok=True)
 
     with open(os.path.join(data_dir, "weekly_alerts.geojson"), "w") as f:
         json.dump(geojson, f)
-    print(f"Wrote {len(geojson['features'])} alert polygons to weekly_alerts.geojson")
+    print(f"Wrote {len(geojson['features'])} alert polygons to weekly_alerts.geojson", flush=True)
 
     summary_path = os.path.join(data_dir, "weekly_summary.json")
     if os.path.exists(summary_path):
@@ -162,7 +192,7 @@ def main():
 
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"Updated {summary_path}")
+    print(f"Updated {summary_path}", flush=True)
 
 
 if __name__ == "__main__":
