@@ -1,12 +1,17 @@
-"""
+﻿"""
 Computes independent, per-year tree cover & loss statistics for Pakistan
 (2000-2025) from the Hansen Global Forest Change dataset, and writes them
-to data/annual_stats.json for the dashboard to read.
+to docs/data/annual_stats.json for the dashboard to read.
 
 Each year is calculated separately (not derived from the prior year):
-  - Loss_Acres: acreage lost specifically in that year
-  - Tree_Cover_Acres: acreage still forested as of that year (2000 baseline
+  - loss_acres: acreage lost specifically in that year
+  - tree_cover_acres: acreage still forested as of that year (2000 baseline
     minus everything lost up to and including that year)
+
+Years are requested one at a time in a loop (rather than bundled into a
+single Earth Engine request) so that no single call is large enough to
+risk hitting Earth Engine's ~5-minute synchronous computation limit, and
+so progress prints live instead of going silent until the very end.
 
 Run: python scripts/update_annual_stats.py
 """
@@ -17,8 +22,7 @@ import ee
 from common import init_earth_engine, get_study_area
 
 M2_TO_ACRES = 0.000247105
-END_YEAR = 2025  # change if a newer Hansen release adds another year
-NUM_YEARS = END_YEAR - 2000  # years 1..NUM_YEARS correspond to 2001..END_YEAR
+END_YEAR = 2025
 
 
 def main():
@@ -31,60 +35,51 @@ def main():
     loss_year = hansen.select("lossyear").clip(study_area)
     pixel_area = ee.Image.pixelArea()
 
-    # Baseline year 2000 total (its own independent row)
+    print("Computing 2000 baseline...", flush=True)
     total_acres_2000 = ee.Number(
         tree_cover_2000.multiply(pixel_area).reduceRegion(
-            reducer=ee.Reducer.sum(), geometry=study_area, scale=100, maxPixels=1e13
+            reducer=ee.Reducer.sum(), geometry=study_area, scale=100,
+            maxPixels=1e13, bestEffort=True, tileScale=4
         ).get("treecover2000")
-    ).multiply(M2_TO_ACRES)
+    ).multiply(M2_TO_ACRES).getInfo()
+    print(f"  2000 baseline: {round(total_acres_2000, 2)} acres", flush=True)
 
-    def yearly_stats(y):
-        y = ee.Number(y)
-        year_val = y.add(2000)
+    rows = [{"year": 2000, "loss_acres": 0, "tree_cover_acres": round(total_acres_2000, 2)}]
+
+    for y in range(1, END_YEAR - 2000 + 1):
+        year_val = 2000 + y
+        print(f"Computing {year_val}...", flush=True)
 
         yearly_loss_img = loss_year.eq(y)
         acres_lost = ee.Number(
             yearly_loss_img.multiply(pixel_area).reduceRegion(
-                reducer=ee.Reducer.sum(), geometry=study_area, scale=250, maxPixels=1e13
+                reducer=ee.Reducer.sum(), geometry=study_area, scale=250,
+                maxPixels=1e13, bestEffort=True, tileScale=4
             ).get("lossyear", 0)
-        ).multiply(M2_TO_ACRES)
+        ).multiply(M2_TO_ACRES).getInfo()
 
         still_standing_mask = tree_cover_2000.And(loss.Not().Or(loss_year.gt(y)))
         acres_cover = ee.Number(
             still_standing_mask.multiply(pixel_area).reduceRegion(
-                reducer=ee.Reducer.sum(), geometry=study_area, scale=250, maxPixels=1e13
+                reducer=ee.Reducer.sum(), geometry=study_area, scale=250,
+                maxPixels=1e13, bestEffort=True, tileScale=4
             ).get("treecover2000", 0)
-        ).multiply(M2_TO_ACRES)
+        ).multiply(M2_TO_ACRES).getInfo()
 
-        return ee.Feature(None, {
-            "Year": year_val,
-            "Loss_Acres": acres_lost,
-            "Tree_Cover_Acres": acres_cover,
-        })
+        acres_lost = round(acres_lost, 2) if acres_lost else 0.0
+        acres_cover = round(acres_cover, 2) if acres_cover else 0.0
 
-    years = ee.List.sequence(1, NUM_YEARS)
-    annual_stats = ee.FeatureCollection(years.map(yearly_stats))
+        print(f"  {year_val}: loss={acres_lost} acres, cover={acres_cover} acres", flush=True)
 
-    print("Requesting annual stats from Earth Engine (this can take a few minutes)...")
-    result = annual_stats.getInfo()["features"]
+        rows.append({"year": year_val, "loss_acres": acres_lost, "tree_cover_acres": acres_cover})
 
-    rows = [
-        {"year": 2000, "loss_acres": 0, "tree_cover_acres": round(total_acres_2000.getInfo(), 2)}
-    ]
-    for f in result:
-        p = f["properties"]
-        rows.append({
-            "year": int(p["Year"]),
-            "loss_acres": round(p["Loss_Acres"], 2),
-            "tree_cover_acres": round(p["Tree_Cover_Acres"], 2),
-        })
     rows.sort(key=lambda r: r["year"])
 
     out_path = os.path.join(os.path.dirname(__file__), "..", "docs", "data", "annual_stats.json")
     with open(out_path, "w") as f:
         json.dump({"source": "Hansen Global Forest Change v1.13 (UMD)", "unit": "acres", "years": rows}, f, indent=2)
 
-    print(f"Wrote {len(rows)} yearly rows to {out_path}")
+    print(f"Wrote {len(rows)} yearly rows to {out_path}", flush=True)
 
 
 if __name__ == "__main__":
