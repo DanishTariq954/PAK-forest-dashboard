@@ -1,6 +1,13 @@
 {
   "unit": "acres",
-  "method": "Sentinel-2 NDVI drop screening (not an official alert product) — not yet run",
-  "weeks": [],
-  "last_updated": null
+  "method": "Sentinel-2 NDVI drop screening (not an official alert product) \u2014 not yet run",
+  "weeks": [
+    {
+      "week_of": "2026-08-27",
+      "alert_acres": 0.0,
+      "baseline_images": 80,
+      "current_images": 80
+    }
+  ],
+  "last_updated": "2026-09-03"
 }
