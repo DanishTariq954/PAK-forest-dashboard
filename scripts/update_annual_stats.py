@@ -9,9 +9,15 @@ Each year is calculated separately (not derived from the prior year):
     minus everything lost up to and including that year)
 
 Years are requested one at a time in a loop (rather than bundled into a
-single Earth Engine request) so that no single call is large enough to
-risk hitting Earth Engine's ~5-minute synchronous computation limit, and
-so progress prints live instead of going silent until the very end.
+single Earth Engine request) so that no single call risks hitting Earth
+Engine's ~5-minute synchronous computation limit, and progress prints
+live instead of going silent until the very end.
+
+The "still standing" calculation deliberately avoids Earth Engine's
+.And()/.Or() logical image operators -- combining a masked image with an
+unmasked one through those operators was found to silently zero out the
+result instead of erroring. Using plain arithmetic on fully unmasked
+0/1 images (multiply = AND, max = OR) avoids that pitfall entirely.
 
 Run: python scripts/update_annual_stats.py
 """
@@ -30,14 +36,16 @@ def main():
     study_area = get_study_area()
 
     hansen = ee.Image("UMD/hansen/global_forest_change_2025_v1_13")
-    tree_cover_2000 = hansen.select("treecover2000").gt(0).selfMask().clip(study_area)
-    loss = hansen.select("loss").clip(study_area)
-    loss_year = hansen.select("lossyear").clip(study_area)
+    tree_cover_binary = hansen.select("treecover2000").gt(0)
+    loss_binary = hansen.select("loss")
+    loss_year_band = hansen.select("lossyear")
     pixel_area = ee.Image.pixelArea()
+
+    tree_cover_2000_masked = tree_cover_binary.selfMask().clip(study_area)
 
     print("Computing 2000 baseline...", flush=True)
     total_acres_2000 = ee.Number(
-        tree_cover_2000.multiply(pixel_area).reduceRegion(
+        tree_cover_2000_masked.multiply(pixel_area).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=study_area, scale=100,
             maxPixels=1e13, bestEffort=True, tileScale=4
         ).get("treecover2000")
@@ -50,7 +58,7 @@ def main():
         year_val = 2000 + y
         print(f"Computing {year_val}...", flush=True)
 
-        yearly_loss_img = loss_year.eq(y)
+        yearly_loss_img = loss_year_band.eq(y)
         acres_lost = ee.Number(
             yearly_loss_img.multiply(pixel_area).reduceRegion(
                 reducer=ee.Reducer.sum(), geometry=study_area, scale=250,
@@ -58,9 +66,15 @@ def main():
             ).get("lossyear", 0)
         ).multiply(M2_TO_ACRES).getInfo()
 
-        still_standing_mask = tree_cover_2000.And(loss.Not().Or(loss_year.gt(y)))
+        never_lost_or_lost_later = loss_binary.eq(0).max(loss_year_band.gt(y))
+        still_standing = (
+            tree_cover_binary.multiply(never_lost_or_lost_later)
+            .rename("treecover2000")
+            .clip(study_area)
+        )
+
         acres_cover = ee.Number(
-            still_standing_mask.multiply(pixel_area).reduceRegion(
+            still_standing.multiply(pixel_area).reduceRegion(
                 reducer=ee.Reducer.sum(), geometry=study_area, scale=250,
                 maxPixels=1e13, bestEffort=True, tileScale=4
             ).get("treecover2000", 0)
