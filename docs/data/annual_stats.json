@@ -1,5 +1,136 @@
 {
-  "source": "Hansen Global Forest Change v1.13 (UMD) — not yet run",
+  "source": "Hansen Global Forest Change v1.13 (UMD)",
   "unit": "acres",
-  "years": []
+  "years": [
+    {
+      "year": 2000,
+      "loss_acres": 0,
+      "tree_cover_acres": 6925130.14
+    },
+    {
+      "year": 2001,
+      "loss_acres": 595.42,
+      "tree_cover_acres": 32342.81
+    },
+    {
+      "year": 2002,
+      "loss_acres": 921.89,
+      "tree_cover_acres": 31984.11
+    },
+    {
+      "year": 2003,
+      "loss_acres": 1675.42,
+      "tree_cover_acres": 31284.35
+    },
+    {
+      "year": 2004,
+      "loss_acres": 3096.96,
+      "tree_cover_acres": 29638.86
+    },
+    {
+      "year": 2005,
+      "loss_acres": 2415.15,
+      "tree_cover_acres": 28358.95
+    },
+    {
+      "year": 2006,
+      "loss_acres": 3743.63,
+      "tree_cover_acres": 26233.54
+    },
+    {
+      "year": 2007,
+      "loss_acres": 2999.36,
+      "tree_cover_acres": 24632.95
+    },
+    {
+      "year": 2008,
+      "loss_acres": 2898.19,
+      "tree_cover_acres": 23230.13
+    },
+    {
+      "year": 2009,
+      "loss_acres": 2599.1,
+      "tree_cover_acres": 21900.05
+    },
+    {
+      "year": 2010,
+      "loss_acres": 1935.22,
+      "tree_cover_acres": 20806.76
+    },
+    {
+      "year": 2011,
+      "loss_acres": 1237.56,
+      "tree_cover_acres": 20302.57
+    },
+    {
+      "year": 2012,
+      "loss_acres": 870.78,
+      "tree_cover_acres": 20045.12
+    },
+    {
+      "year": 2013,
+      "loss_acres": 621.81,
+      "tree_cover_acres": 19929.05
+    },
+    {
+      "year": 2014,
+      "loss_acres": 450.46,
+      "tree_cover_acres": 19871.77
+    },
+    {
+      "year": 2015,
+      "loss_acres": 9.34,
+      "tree_cover_acres": 19871.77
+    },
+    {
+      "year": 2016,
+      "loss_acres": 0.0,
+      "tree_cover_acres": 19871.77
+    },
+    {
+      "year": 2017,
+      "loss_acres": 639.14,
+      "tree_cover_acres": 19422.23
+    },
+    {
+      "year": 2018,
+      "loss_acres": 309.66,
+      "tree_cover_acres": 19303.24
+    },
+    {
+      "year": 2019,
+      "loss_acres": 400.32,
+      "tree_cover_acres": 19117.83
+    },
+    {
+      "year": 2020,
+      "loss_acres": 351.96,
+      "tree_cover_acres": 18969.85
+    },
+    {
+      "year": 2021,
+      "loss_acres": 284.69,
+      "tree_cover_acres": 18868.45
+    },
+    {
+      "year": 2022,
+      "loss_acres": 228.57,
+      "tree_cover_acres": 18803.13
+    },
+    {
+      "year": 2023,
+      "loss_acres": 5449.44,
+      "tree_cover_acres": 18113.82
+    },
+    {
+      "year": 2024,
+      "loss_acres": 11567.47,
+      "tree_cover_acres": 16940.19
+    },
+    {
+      "year": 2025,
+      "loss_acres": 7608.85,
+      "tree_cover_acres": 16242.08
+    }
+  ]
 }
