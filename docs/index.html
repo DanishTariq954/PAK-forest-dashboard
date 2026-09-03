@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -14,28 +14,28 @@
 <header class="masthead">
   <div class="masthead-inner">
     <h1>Pakistan Forest Watch</h1>
-    <p class="subtitle">Tree cover, annual loss, and weekly Sentinel-2 change screening — Pakistan, Azad Kashmir &amp; Gilgit-Baltistan</p>
+    <p class="subtitle">Tree cover, annual loss, and weekly Sentinel-2 change screening -- Pakistan, Azad Kashmir &amp; Gilgit-Baltistan</p>
   </div>
   <div class="masthead-meta">
-    <span id="lastUpdated">Loading last update time…</span>
+    <span id="lastUpdated">Loading last update time...</span>
   </div>
 </header>
 
 <section class="kpi-strip" id="kpiStrip">
   <div class="kpi">
-    <span class="kpi-value" id="kpiBaseline">—</span>
+    <span class="kpi-value" id="kpiBaseline">-</span>
     <span class="kpi-label">Acres forested, 2000 baseline</span>
   </div>
   <div class="kpi">
-    <span class="kpi-value" id="kpiCurrent">—</span>
+    <span class="kpi-value" id="kpiCurrent">-</span>
     <span class="kpi-label">Acres forested, latest year</span>
   </div>
   <div class="kpi">
-    <span class="kpi-value" id="kpiTotalLoss">—</span>
+    <span class="kpi-value" id="kpiTotalLoss">-</span>
     <span class="kpi-label">Acres lost since 2000</span>
   </div>
   <div class="kpi kpi-alert">
-    <span class="kpi-value" id="kpiWeekly">—</span>
+    <span class="kpi-value" id="kpiWeekly">-</span>
     <span class="kpi-label">Acres flagged this week</span>
   </div>
 </section>
@@ -44,16 +44,16 @@
 
   <section class="panel map-panel">
     <div class="panel-head">
-      <h2>Weekly change screen</h2>
-      <p>Areas flagged where healthy forest showed a sharp NDVI drop in the last 7 days, compared with an 8-week baseline.</p>
+      <h2>Map layers</h2>
+      <p>Toggle layers in the top-right control: Tree Cover 2000, Current Tree Cover, Binary Loss Map, and this week's Sentinel-2 change alerts.</p>
     </div>
     <div id="map"></div>
-    <p class="map-footnote">Screening heuristic, not a confirmed-clearance product. Cloud gaps, harvest cycles, and seasonal change can trigger false flags — treat markers as leads worth a closer look.</p>
+    <p class="map-footnote">Weekly alerts are a screening heuristic, not a confirmed-clearance product. Cloud gaps, harvest cycles, and seasonal change can trigger false flags -- treat markers as leads worth a closer look.</p>
   </section>
 
   <section class="panel chart-panel">
     <div class="panel-head">
-      <h2>Tree cover, 2000–present</h2>
+      <h2>Tree cover, 2000-present</h2>
       <p>Standing forest acreage and annual loss, calculated independently for each year from Hansen Global Forest Change.</p>
     </div>
     <canvas id="annualChart"></canvas>

@@ -164,3 +164,36 @@ canvas {
   .panel { padding: 1.5rem 0; }
   .kpi { border-right: none; border-bottom: 1px solid var(--line); margin-right: 0; flex: 1 1 45%; }
 }
+
+.leaflet-control-layers {
+  font-family: var(--font-body);
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.leaflet-control-layers-toggle {
+  border-radius: 0 !important;
+}
+
+.leaflet-control-layers {
+  font-family: var(--font-body);
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.leaflet-control-layers-toggle {
+  border-radius: 0 !important;
+}
+
+.leaflet-control-layers {
+  font-family: var(--font-body);
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.leaflet-control-layers-toggle {
+  border-radius: 0 !important;
+}

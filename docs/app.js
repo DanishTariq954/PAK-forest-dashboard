@@ -1,10 +1,10 @@
-const PINE = "#2F5233";
+﻿const PINE = "#2F5233";
 const ALERT = "#B8551E";
 const GOLD = "#B8922E";
 const INK_SOFT = "#4C5A4F";
 
 async function loadJSON(path) {
-  const res = await fetch(path + "?t=" + Date.now()); // cache-bust so updates show immediately
+  const res = await fetch(path + "?t=" + Date.now());
   if (!res.ok) throw new Error("Failed to load " + path);
   return res.json();
 }
@@ -14,7 +14,6 @@ function formatAcres(n) {
 }
 
 async function init() {
-  // ---------- Map ----------
   const map = L.map("map", { scrollWheelZoom: false }).setView([30.5, 70.5], 5.3);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; OpenStreetMap contributors',
@@ -32,11 +31,28 @@ async function init() {
     style: { color: ALERT, weight: 1, fillColor: ALERT, fillOpacity: 0.55 },
   }).addTo(map);
 
+  try {
+    const bounds = await loadJSON("data/map_layers_bounds.json");
+    const leafletBounds = [[bounds.south, bounds.west], [bounds.north, bounds.east]];
+
+    const treeCover2000Layer = L.imageOverlay("data/layer_treecover2000.png", leafletBounds, { opacity: 0.75 });
+    const treeCoverCurrentLayer = L.imageOverlay("data/layer_treecover_current.png", leafletBounds, { opacity: 0.75 }).addTo(map);
+    const binaryLossLayer = L.imageOverlay("data/layer_loss.png", leafletBounds, { opacity: 0.85 }).addTo(map);
+
+    L.control.layers(null, {
+      "Tree Cover 2000": treeCover2000Layer,
+      "Current Tree Cover": treeCoverCurrentLayer,
+      "Binary Loss Map": binaryLossLayer,
+      "This week's alerts": alertLayer,
+    }, { collapsed: false }).addTo(map);
+  } catch (e) {
+    console.warn("Map layers not available yet:", e);
+  }
+
   if (weeklyGeo.features.length > 0) {
     map.fitBounds(alertLayer.getBounds(), { padding: [20, 20] });
   }
 
-  // ---------- KPIs + annual chart ----------
   let annual = { years: [] };
   try {
     annual = await loadJSON("data/annual_stats.json");
@@ -88,11 +104,10 @@ async function init() {
   } else {
     document.getElementById("annualChart").parentElement.insertAdjacentHTML(
       "beforeend",
-      '<p style="color:#4C5A4F;font-size:0.85rem;">No annual data yet — runs after the first Annual Hansen Stats Refresh workflow.</p>'
+      '<p style="color:#4C5A4F;font-size:0.85rem;">No annual data yet -- runs after the first Annual Hansen Stats Refresh workflow.</p>'
     );
   }
 
-  // ---------- Weekly summary + chart ----------
   let weekly = { weeks: [], last_updated: null };
   try {
     weekly = await loadJSON("data/weekly_summary.json");
@@ -129,7 +144,7 @@ async function init() {
     document.getElementById("kpiWeekly").textContent = "0";
     document.getElementById("weeklyChart").parentElement.insertAdjacentHTML(
       "beforeend",
-      '<p style="color:#4C5A4F;font-size:0.85rem;">No weekly data yet — runs after the first Weekly Deforestation Alert Scan.</p>'
+      '<p style="color:#4C5A4F;font-size:0.85rem;">No weekly data yet -- runs after the first Weekly Deforestation Alert Scan.</p>'
     );
   }
 }

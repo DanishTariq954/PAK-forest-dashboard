@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install earthengine-api
+      - run: pip install -r requirements.txt
 
       - name: Run annual stats update
         env:
@@ -26,10 +26,16 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python -u scripts/update_annual_stats.py
 
-      - name: Commit updated annual data
+      - name: Run map layers export
+        env:
+          EE_SERVICE_ACCOUNT_KEY: ${{ secrets.EE_SERVICE_ACCOUNT_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: python -u scripts/update_map_layers.py
+
+      - name: Commit updated annual data and map layers
         run: |
           git config user.name "forest-watch-bot"
           git config user.email "actions@github.com"
-          git add docs/data/annual_stats.json
-          git diff --quiet --cached || git commit -m "Annual stats refresh: $(date -u +'%Y-%m-%d')"
+          git add docs/data/annual_stats.json docs/data/layer_treecover2000.png docs/data/layer_treecover_current.png docs/data/layer_loss.png docs/data/map_layers_bounds.json
+          git diff --quiet --cached || git commit -m "Annual stats + map layers refresh: $(date -u +'%Y-%m-%d')"
           git push
