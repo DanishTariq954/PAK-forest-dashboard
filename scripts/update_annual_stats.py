@@ -30,22 +30,31 @@ ESSENTIAL FIXES applied to the original version of this script:
     (app.js), which reads annual.years, keeps working without any
     changes to it. Nothing about your KPI/annual_trend structure was
     removed -- this is purely an addition for compatibility.
-  - requirements.txt needs "pandas" added (this script imports it) --
-    see the accompanying update.
+  - requirements.txt needs "pandas" added (this script imports it).
 
-  - NEW FIX (this revision): the script used to silently fall back to
+  - FIX (previous revision): the script used to silently fall back to
     an EMPTY FeatureCollection whenever an export task failed, which
     made every downstream sum compute to 0.0 while the job still exited
-    with status 0 (success). That is exactly what happened in the run
-    that produced an all-zero dashboard. The script now:
-      1. Prints the asset root it's using, up front, for fast triage.
-      2. Prints the FULL task status object on failure, not just
-         error_message (permission failures often leave error_message
-         empty).
-      3. Hard-fails (raises SystemExit(1)) if either export task did
-         not complete, instead of continuing with empty data. This
-         makes GitHub Actions correctly show the job as failed instead
-         of quietly publishing zeroed-out stats.
+    with status 0 (success). It now hard-fails (SystemExit(1)) if
+    either export task did not complete, and prints the full task
+    status object for diagnosis.
+
+  - FIX (this revision): ee.data.getAssetRoots()[0]["id"] was returning
+    ".../assets/protected_areas" -- a specific TABLE asset (the study
+    area boundary), not the bare project assets root -- because that's
+    apparently the only root-level item the service account enumerates
+    first. The script then tried to export new tables "into" that
+    table path as if it were a folder, which Earth Engine correctly
+    rejected ("Asset '...protected_areas' is neither a folder nor an
+    image collection."). The script now:
+      1. Normalizes whatever getAssetRoots() returns down to the true
+         bare root "projects/<project>/assets" by truncating after the
+         "assets" path segment.
+      2. Creates (idempotently) a dedicated subfolder
+         "projects/<project>/assets/pak_forest_watch_exports" for all
+         temporary export assets, so exports never collide with, or
+         get placed "inside", existing table assets like
+         protected_areas.
 
 Note (not changed, just flagging): gaul_l1/gaul_l2 here are filtered to
 ADM0_NAME == 'Pakistan' only, so Azad Kashmir and Gilgit-Baltistan (which
@@ -71,6 +80,42 @@ END_YEAR = 2025
 SCALE = 100
 EXPORT_POLL_SECONDS = 15
 EXPORT_TIMEOUT_SECONDS = 40 * 60
+EXPORT_FOLDER_NAME = "pak_forest_watch_exports"
+
+
+def get_project_assets_root():
+    """
+    Return the true bare assets root, e.g. 'projects/<project>/assets',
+    regardless of what getAssetRoots() enumerates first. Earlier runs
+    showed getAssetRoots()[0]['id'] can be a specific child TABLE asset
+    (e.g. '.../assets/protected_areas') rather than the bare root, which
+    breaks any code that tries to create children "under" it.
+    """
+    raw_root = ee.data.getAssetRoots()[0]["id"]
+    parts = raw_root.split("/")
+    if "assets" in parts:
+        idx = parts.index("assets")
+        return "/".join(parts[: idx + 1])
+    return raw_root
+
+
+def ensure_folder_exists(folder_id):
+    """Create folder_id as an EE folder asset if it doesn't already exist."""
+    try:
+        existing = ee.data.getAsset(folder_id)
+        existing_type = existing.get("type", "")
+        if existing_type != "FOLDER":
+            raise RuntimeError(
+                f"Asset '{folder_id}' already exists but is type "
+                f"'{existing_type}', not FOLDER. Refusing to export into it. "
+                f"Delete/rename that asset or change EXPORT_FOLDER_NAME."
+            )
+        return
+    except ee.EEException:
+        pass  # doesn't exist yet -- create it below
+
+    ee.data.createAsset({"type": "FOLDER"}, folder_id)
+    print(f"Created export folder: {folder_id}", flush=True)
 
 
 def run_export_and_wait(collection, description, asset_id):
@@ -104,8 +149,13 @@ def run_export_and_wait(collection, description, asset_id):
 def main():
     init_earth_engine()
     study_area = get_study_area()
-    asset_root = ee.data.getAssetRoots()[0]["id"]
-    print(f"Using asset root: {asset_root}", flush=True)
+
+    assets_root = get_project_assets_root()
+    print(f"Resolved project assets root: {assets_root}", flush=True)
+
+    export_folder = f"{assets_root}/{EXPORT_FOLDER_NAME}"
+    ensure_folder_exists(export_folder)
+    print(f"Using export folder: {export_folder}", flush=True)
 
     hansen = ee.Image("UMD/hansen/global_forest_change_2025_v1_13")
     tree_cover_2000 = hansen.select("treecover2000")
@@ -137,12 +187,12 @@ def main():
     gaul_l2 = ee.FeatureCollection("FAO/GAUL/2015/level2").filter(ee.Filter.eq("ADM0_NAME", "Pakistan"))
 
     print("Running province-level spatial reduction (async export)...", flush=True)
-    prov_asset_id = f"{asset_root}/pak_forest_watch_annual_prov_tmp"
+    prov_asset_id = f"{export_folder}/pak_forest_watch_annual_prov_tmp"
     prov_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l1, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=16)
     prov_success = run_export_and_wait(prov_reduced_fc, "pak_forest_watch_annual_prov", prov_asset_id)
 
     print("Running district-level spatial reduction (async export)...", flush=True)
-    dist_asset_id = f"{asset_root}/pak_forest_watch_annual_dist_tmp"
+    dist_asset_id = f"{export_folder}/pak_forest_watch_annual_dist_tmp"
     dist_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l2, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=16)
     dist_success = run_export_and_wait(dist_reduced_fc, "pak_forest_watch_annual_dist", dist_asset_id)
 
