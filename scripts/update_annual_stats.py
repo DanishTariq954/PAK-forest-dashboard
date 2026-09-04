@@ -9,59 +9,66 @@ KPI Dashboard Metrics Included:
 3. Total Forest Loss (2000-2025)
 4. Highest Loss Province & Highest Loss District/City
 
-ESSENTIAL FIXES applied to the original version of this script:
-  - The two province/district reduceRegions() calls now go through an
-    async export-to-asset + poll cycle instead of a direct synchronous
-    .getInfo(). A single call reducing a ~27-band composite across ~150
-    district polygons at fine resolution is far too heavy to finish
-    inside Earth Engine's ~5-minute synchronous request limit -- this
-    was proven repeatedly earlier in this project. Async export removes
-    that ceiling.
-  - scale bumped from 30 to 100: still a fine, meaningful resolution for
-    district-sized polygons, but 30m at country-wide scale for a 27-band
-    image is unnecessarily heavy for the accuracy gained.
-  - Hansen dataset updated from 2024_v1_12 to 2025_v1_13, matching every
-    other script in this project (map layers, weekly alerts, regional
-    stats). Mixing dataset versions across pages would silently produce
-    inconsistent numbers for the same years.
-  - END_YEAR updated to 2025 to match the newer dataset's loss-year range.
-  - The output now ALSO includes a top-level "years" array (identical
-    content to "annual_trend") so the existing dashboard frontend
-    (app.js), which reads annual.years, keeps working without any
-    changes to it. Nothing about your KPI/annual_trend structure was
-    removed -- this is purely an addition for compatibility.
-  - requirements.txt needs "pandas" added (this script imports it).
+FIX HISTORY:
+  - Async export-to-asset + poll cycle instead of synchronous .getInfo()
+    (avoids the ~5 minute synchronous request ceiling).
+  - Hansen dataset pinned to 2025_v1_13, matching every other script in
+    this project.
+  - Hard-fail (SystemExit(1)) instead of silently writing zeroed-out
+    stats when an export task doesn't complete -- a failed CI run is
+    far better than quietly publishing wrong numbers.
+  - Asset-root bug fixed: ee.data.getAssetRoots()[0]["id"] can return a
+    specific child TABLE asset (e.g. ".../assets/protected_areas")
+    rather than the bare project assets root, which broke every export.
+    Now normalized to the true root, with a dedicated
+    "pak_forest_watch_exports" folder created/reused for all temp
+    assets.
 
-  - FIX (previous revision): the script used to silently fall back to
-    an EMPTY FeatureCollection whenever an export task failed, which
-    made every downstream sum compute to 0.0 while the job still exited
-    with status 0 (success). It now hard-fails (SystemExit(1)) if
-    either export task did not complete, and prints the full task
-    status object for diagnosis.
+  - THIS REVISION: the previous run's log showed both export tasks
+    stuck at state=READY for the FULL 40-minute timeout window --
+    never once transitioning to RUNNING. Combined with the
+    "noncommercial compute quota... restricted mode" warning also
+    present in that log, this means Earth Engine could not schedule a
+    job this large (27-band composite x ~150 district polygons x 100m
+    resolution) within the available quota at all, regardless of how
+    long we wait.
 
-  - FIX (this revision): ee.data.getAssetRoots()[0]["id"] was returning
-    ".../assets/protected_areas" -- a specific TABLE asset (the study
-    area boundary), not the bare project assets root -- because that's
-    apparently the only root-level item the service account enumerates
-    first. The script then tried to export new tables "into" that
-    table path as if it were a folder, which Earth Engine correctly
-    rejected ("Asset '...protected_areas' is neither a folder nor an
-    image collection."). The script now:
-      1. Normalizes whatever getAssetRoots() returns down to the true
-         bare root "projects/<project>/assets" by truncating after the
-         "assets" path segment.
-      2. Creates (idempotently) a dedicated subfolder
-         "projects/<project>/assets/pak_forest_watch_exports" for all
-         temporary export assets, so exports never collide with, or
-         get placed "inside", existing table assets like
-         protected_areas.
+    The only lever we control from the script side is the size of the
+    computation itself, so:
+      * SCALE increased from 100m to 500m. Pixel count (and therefore
+        compute) scales with scale^2, so this is roughly a 25x
+        reduction in total work -- while still being a standard,
+        defensible resolution for province/district-level AREA TOTALS
+        (as opposed to fine boundary shapes). Very small or narrow
+        districts may see reduced precision; total acreage sums remain
+        meaningful.
+      * tileScale reduced from 16 to 4. tileScale trades more
+        (smaller) tiles for lower per-tile memory use; at 100m it was
+        needed to avoid out-of-memory errors on the huge composite, but
+        at 500m the per-tile memory footprint is already ~25x smaller,
+        so a lower tileScale is sufficient and avoids adding needless
+        tile-management overhead on top of an already
+        quota-constrained job.
+      * EXPORT_TIMEOUT_SECONDS increased from 40 to 60 minutes as a
+        safety margin -- the job should now be small enough to actually
+        get scheduled and finish well inside that window, but a bit of
+        headroom is cheap insurance.
+      * The poll loop now explicitly calls out if a task is still
+        showing READY (as opposed to RUNNING) once it's been waiting a
+        while, so future log output makes this queuing-vs-executing
+        distinction obvious without having to eyeball repeated lines.
 
-Note (not changed, just flagging): gaul_l1/gaul_l2 here are filtered to
-ADM0_NAME == 'Pakistan' only, so Azad Kashmir and Gilgit-Baltistan (which
-FAO GAUL treats as separate ADM0 units, not provinces of Pakistan) won't
-appear in the province-level KPIs from this script, even though they're
-included in the country's overall study area. That's your original
-script's design -- left as-is per your request.
+    IMPORTANT CAVEAT: if your Earth Engine project is still deep in
+    restricted mode (i.e. the noncommercial compute quota is
+    essentially exhausted for the billing period), even this smaller
+    job may still queue for a while or fail to schedule. That is a
+    project-level quota issue Earth Engine controls, not something any
+    script-side change can fully guarantee around. If this run still
+    times out, the practical next steps are: (a) wait for the quota
+    window to reset and re-run, or (b) request a compute quota increase
+    / move the project to a paid tier, per the URL Earth Engine printed
+    in the warning:
+    https://developers.google.com/earth-engine/guides/noncommercial_tiers#restricted_mode
 
 Run: python scripts/update_annual_stats.py
 """
@@ -77,19 +84,18 @@ M2_TO_ACRES = 0.000247105
 CANOPY_THRESHOLD = 1
 START_YEAR = 2001
 END_YEAR = 2025
-SCALE = 100
+SCALE = 500                      # was 100 -- see fix note above
+TILE_SCALE = 4                   # was 16 -- see fix note above
 EXPORT_POLL_SECONDS = 15
-EXPORT_TIMEOUT_SECONDS = 40 * 60
+EXPORT_TIMEOUT_SECONDS = 60 * 60  # was 40 * 60 -- extra safety margin
 EXPORT_FOLDER_NAME = "pak_forest_watch_exports"
 
 
 def get_project_assets_root():
     """
     Return the true bare assets root, e.g. 'projects/<project>/assets',
-    regardless of what getAssetRoots() enumerates first. Earlier runs
-    showed getAssetRoots()[0]['id'] can be a specific child TABLE asset
-    (e.g. '.../assets/protected_areas') rather than the bare root, which
-    breaks any code that tries to create children "under" it.
+    regardless of what getAssetRoots() enumerates first (it can return a
+    specific child TABLE asset instead of the bare root).
     """
     raw_root = ee.data.getAssetRoots()[0]["id"]
     parts = raw_root.split("/")
@@ -129,6 +135,7 @@ def run_export_and_wait(collection, description, asset_id):
     print(f"Started export task '{description}' -> {asset_id}", flush=True)
 
     waited = 0
+    stuck_in_ready_warned = False
     while waited < EXPORT_TIMEOUT_SECONDS:
         status = task.status()
         state = status.get("state")
@@ -141,6 +148,16 @@ def run_export_and_wait(collection, description, asset_id):
         waited += EXPORT_POLL_SECONDS
         if waited % 60 == 0:
             print(f"  ...still running ({waited // 60} min, state={state})", flush=True)
+            if state == "READY" and waited >= 300 and not stuck_in_ready_warned:
+                print(
+                    "  NOTE: task has been in READY (queued, not yet "
+                    "executing) for 5+ minutes. This usually means Earth "
+                    "Engine hasn't allocated compute capacity to it yet -- "
+                    "often due to noncommercial compute quota / restricted "
+                    "mode, not a problem with the job itself.",
+                    flush=True,
+                )
+                stuck_in_ready_warned = True
 
     print(f"  Export '{description}' did not finish within the timeout window.", flush=True)
     return False
@@ -186,19 +203,16 @@ def main():
     gaul_l1 = ee.FeatureCollection("FAO/GAUL/2015/level1").filter(ee.Filter.eq("ADM0_NAME", "Pakistan"))
     gaul_l2 = ee.FeatureCollection("FAO/GAUL/2015/level2").filter(ee.Filter.eq("ADM0_NAME", "Pakistan"))
 
-    print("Running province-level spatial reduction (async export)...", flush=True)
+    print(f"Running province-level spatial reduction at {SCALE}m (async export)...", flush=True)
     prov_asset_id = f"{export_folder}/pak_forest_watch_annual_prov_tmp"
-    prov_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l1, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=16)
+    prov_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l1, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=TILE_SCALE)
     prov_success = run_export_and_wait(prov_reduced_fc, "pak_forest_watch_annual_prov", prov_asset_id)
 
-    print("Running district-level spatial reduction (async export)...", flush=True)
+    print(f"Running district-level spatial reduction at {SCALE}m (async export)...", flush=True)
     dist_asset_id = f"{export_folder}/pak_forest_watch_annual_dist_tmp"
-    dist_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l2, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=16)
+    dist_reduced_fc = composite_metrics.reduceRegions(collection=gaul_l2, reducer=ee.Reducer.sum(), scale=SCALE, tileScale=TILE_SCALE)
     dist_success = run_export_and_wait(dist_reduced_fc, "pak_forest_watch_annual_dist", dist_asset_id)
 
-    # HARD FAIL instead of silently continuing with empty data. Writing
-    # zeroed-out stats over good historical data is worse than a failed
-    # CI run -- a failed run is visible and doesn't corrupt the dashboard.
     if not prov_success or not dist_success:
         print(
             "FATAL: one or more Earth Engine exports failed. Refusing to "
