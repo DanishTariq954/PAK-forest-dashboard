@@ -1,44 +1,3 @@
-"""
-Computes precise annual tree cover & loss statistics for Pakistan (2000-2025)
-from the Hansen Global Forest Change dataset and writes them to
-docs/data/annual_stats.json for web dashboard rendering.
-
-KPI Dashboard Metrics Included:
-1. Forest Area in 2000
-2. Forest Area in 2025 (Remaining)
-3. Total Forest Loss (2000-2025)
-4. Highest Loss Province & Highest Loss District/City
-
-ESSENTIAL FIXES applied to the original version of this script:
-  - The two province/district reduceRegions() calls now go through an
-    async export-to-asset + poll cycle instead of a direct synchronous
-    .getInfo(). A single call reducing a ~27-band composite across ~150
-    district polygons at fine resolution is far too heavy to finish
-    inside Earth Engine's ~5-minute synchronous request limit -- this
-    was proven repeatedly earlier in this project. Async export removes
-    that ceiling.
-  - scale bumped from 30 to 100: still a fine, meaningful resolution for
-    district-sized polygons, but 30m at country-wide scale for a 27-band
-    image is unnecessarily heavy for the accuracy gained.
-  - Hansen dataset updated from 2024_v1_12 to 2025_v1_13, matching every
-    other script in this project (map layers, weekly alerts, regional
-    stats). Mixing dataset versions across pages would silently produce
-    inconsistent numbers for the same years.
-  - END_YEAR updated to 2025 to match the newer dataset's loss-year range.
-  - The output now ALSO includes a top-level "years" array (identical
-    content to "annual_trend") so the existing dashboard frontend
-    (app.js), which reads annual.years, keeps working without any
-    changes to it. Nothing about your KPI/annual_trend structure was
-    removed -- this is purely an addition for compatibility.
-  - requirements.txt needs "pandas" added (this script imports it) --
-    see the accompanying update.
-
-Note (not changed, just flagging): gaul_l1/gaul_l2 here are filtered to
-ADM0_NAME == 'Pakistan' only, so Azad Kashmir and Gilgit-Baltistan (which
-FAO GAUL treats as separate ADM0 units, not provinces of Pakistan) won't
-appear in the province-level KPIs from this script, even though they're
-included in the country's overall study area. That's your original
-script's design -- left as-is per your request.
 
 Run: python scripts/update_annual_stats.py
 """
@@ -76,16 +35,15 @@ def run_export_and_wait(collection, description, asset_id):
         if state == "COMPLETED":
             return True
         if state in ("FAILED", "CANCELLED"):
-            print(f"  Task failed: {status.get('error_message')}", flush=True)
+            print(f"  Task '{description}' FAILED. Full status: {status}", flush=True)
             return False
         time.sleep(EXPORT_POLL_SECONDS)
         waited += EXPORT_POLL_SECONDS
         if waited % 60 == 0:
             print(f"  ...still running ({waited // 60} min, state={state})", flush=True)
 
-    print("  Export did not finish within the timeout window.", flush=True)
+    print(f"  Export '{description}' did not finish within the timeout window.", flush=True)
     return False
-
 
 def main():
     init_earth_engine()
