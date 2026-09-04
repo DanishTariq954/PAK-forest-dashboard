@@ -1,4 +1,4 @@
-﻿"""
+"""
 Near-real-time (weekly) deforestation alerting for Pakistan using Sentinel-2.
 
 This production-grade script detects localized canopy disturbances by monitoring 
