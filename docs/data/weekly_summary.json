@@ -31,7 +31,13 @@
       "alert_acres": 0.0,
       "baseline_images": 2847,
       "current_images": 418
+    },
+    {
+      "week_of": "2026-09-28",
+      "alert_acres": 0.0,
+      "baseline_images": 2938,
+      "current_images": 423
     }
   ],
-  "last_updated": "2026-09-28"
+  "last_updated": "2026-10-05"
 }
